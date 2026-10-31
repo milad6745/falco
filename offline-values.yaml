@@ -1,0 +1,16 @@
+# Offline profile for Falco chart 4.8.1; review compatibility before switching versions.
+driver:
+  enabled: true
+  kind: kmod
+  loader:
+    enabled: true
+falcoctl:
+  artifact:
+    install:
+      enabled: false
+    follow:
+      enabled: false
+# Embedded rules from Falco image; no OCI artifact updates at pod startup.
+# Do not enable falcosidekick unless its chart/images are separately bundled.
+falcosidekick:
+  enabled: false
