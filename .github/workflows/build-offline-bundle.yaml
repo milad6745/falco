@@ -1,0 +1,63 @@
+name: Build Falco kmod offline bundle
+on:
+  workflow_dispatch:
+    inputs:
+      chart_version:
+        description: 'Pinned Falco Helm chart version (4.8.1 = Falco 0.38.2)'
+        required: true
+        default: '4.8.1'
+      architecture:
+        description: 'Image architecture'
+        type: choice
+        options: [amd64, arm64]
+        default: amd64
+permissions:
+  contents: read
+jobs:
+  bundle:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: azure/setup-helm@v4.3.0
+        with:
+          version: v3.16.4
+      - name: Prepare pinned chart and render offline profile
+        env:
+          CHART_VERSION: ${{ inputs.chart_version }}
+        run: |
+          set -euo pipefail
+          mkdir -p dist/charts dist/images
+          helm repo add falcosecurity https://falcosecurity.github.io/charts
+          helm pull falcosecurity/falco --version "$CHART_VERSION" --destination dist/charts
+          helm template falco dist/charts/falco-"$CHART_VERSION".tgz \
+            -n falco -f offline-values.yaml > dist/rendered-upstream.yaml
+          python3 -m pip install --quiet PyYAML
+          python3 scripts/collect_images.py dist/rendered-upstream.yaml dist/images.txt
+          cat dist/images.txt
+      - name: Pull and save ALL images from rendered manifest
+        env:
+          ARCH: ${{ inputs.architecture }}
+        run: |
+          set -euo pipefail
+          while IFS= read -r img; do
+            [ -n "$img" ] || continue
+            echo "Pulling $img for linux/$ARCH"
+            docker pull --platform "linux/$ARCH" "$img"
+          done < dist/images.txt
+          mapfile -t IMAGES < dist/images.txt
+          docker save -o dist/images/falco-images.tar "${IMAGES[@]}"
+          sha256sum dist/images/falco-images.tar > dist/images/falco-images.tar.sha256
+      - name: Write checksums and package
+        run: |
+          set -euo pipefail
+          cp offline-values.yaml dist/
+          cp README.md dist/
+          cp -r scripts dist/
+          (cd dist && find charts -type f -print0 | xargs -0 sha256sum > charts.sha256)
+          tar -czf falco-kmod-offline-bundle.tar.gz -C dist .
+          sha256sum falco-kmod-offline-bundle.tar.gz
+      - uses: actions/upload-artifact@v4
+        with:
+          name: falco-kmod-offline-${{ inputs.chart_version }}-${{ inputs.architecture }}
+          path: falco-kmod-offline-bundle.tar.gz
+          retention-days: 14
